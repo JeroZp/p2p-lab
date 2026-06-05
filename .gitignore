@@ -30,3 +30,12 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# p2p-lab specific
+bin/
+*.key
+node_data/
+
+# OS
+.DS_Store
+Thumbs.db
