@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/JeroZp/p2p-lab/internal/common"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Node is a P2P node. It listens for incoming connections,
@@ -20,6 +21,8 @@ type Node struct {
 	mu       sync.RWMutex
 
 	Inbound chan Message // all received messages land here
+
+	metrics *coreMetrics
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -40,6 +43,7 @@ func NewNode(keyPath string) (*Node, error) {
 		keyPair: kp,
 		peers:   make(map[common.NodeID]*Conn),
 		Inbound: make(chan Message, 128),
+		metrics: newCoreMetrics(),
 		ctx:     ctx,
 		cancel:  cancel,
 	}, nil
@@ -142,6 +146,8 @@ func (n *Node) serveConn(conn *Conn) {
 				continue
 			}
 
+			n.metrics.messagesReceivedTotal.WithLabelValues(string(msg.ID)).Inc()
+
 			// forward all other message to the node's inbound channel
 			select {
 			case n.Inbound <- msg:
@@ -159,6 +165,7 @@ func (n *Node) addPeer(conn *Conn) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.peers[conn.id] = conn
+	n.metrics.connectionsActive.Inc()
 }
 
 // removePeer removes a connection from the peer pool.
@@ -166,6 +173,7 @@ func (n *Node) removePeer(id common.NodeID) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	delete(n.peers, id)
+	n.metrics.connectionsActive.Dec()
 }
 
 func (n *Node) Send(to common.NodeID, msg Message) error {
@@ -176,6 +184,8 @@ func (n *Node) Send(to common.NodeID, msg Message) error {
 	if !ok {
 		return fmt.Errorf("no connection to peer %s", to)
 	}
+
+	n.metrics.messagesSentTotal.WithLabelValues(string(msg.Type)).Inc()
 	return conn.Send(msg)
 }
 
@@ -214,4 +224,9 @@ func (n *Node) Addr() string {
 		return ""
 	}
 	return n.listener.Addr().String()
+}
+
+// Registry returns the Prometheus registry for this node.
+func (n *Node) Registry() *prometheus.Registry {
+	return n.metrics.registry
 }
