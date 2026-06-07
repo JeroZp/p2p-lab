@@ -110,7 +110,7 @@ func (c *Conn) writeLoop() {
 				c.close()
 				return
 			}
-		case <- c.ctx.Done():
+		case <-c.ctx.Done():
 			return
 		}
 	}
