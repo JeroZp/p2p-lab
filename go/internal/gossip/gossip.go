@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JeroZp/p2p-lab/internal/core"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // FanOut is the number of peers a node forwards a gossip message to.
@@ -41,6 +42,8 @@ type Engine struct {
 	seen map[string]seenEntry // message ID -> when we saw it
 	mu   sync.Mutex           // protects seen map
 
+	metrics *gossipMetrics
+
 	Received chan []byte // delivers data to the application layer
 
 	ctx    context.Context
@@ -54,6 +57,7 @@ func NewEngine(node *core.Node) *Engine {
 	return &Engine{
 		node:     node,
 		seen:     make(map[string]seenEntry),
+		metrics:  newGossipMetrics(),
 		Received: make(chan []byte, 64),
 		ctx:      ctx,
 		cancel:   cancel,
@@ -134,6 +138,7 @@ func (e *Engine) forward(msg core.Message) error {
 			// peer might have just disconnected
 			continue
 		}
+		e.metrics.forwardedTotal.Inc()
 	}
 	return nil
 }
@@ -148,6 +153,7 @@ func (e *Engine) handle(msg core.Message) {
 
 	// drop if we've seen this message before
 	if e.hasSeen(msg.ID) {
+		e.metrics.duplicatesTotal.Inc()
 		return
 	}
 	e.markSeen(msg.ID)
@@ -220,4 +226,9 @@ func (e *Engine) Stop() {
 // In gossip.go — lets tests access the underlying node
 func (e *Engine) Node() *core.Node {
 	return e.node
+}
+
+// Registry returns the Prometheus registry for this engine.
+func (e *Engine) Registry() *prometheus.Registry {
+	return e.metrics.registry
 }
