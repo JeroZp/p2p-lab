@@ -101,7 +101,7 @@ func (n *Node) Dial(addr string) error {
 
 	// Send our handshake immediatly so the remote node knows who we are
 	handshake := Message{
-		Type: TypHandshake,
+		Type: TypeHandshake,
 		From: n.ID,
 		ID:   "handshake",
 	}
@@ -126,7 +126,7 @@ func (n *Node) serveConn(conn *Conn) {
 	for {
 		select {
 		case msg := <-conn.inbound:
-			if msg.Type == TypHandshake {
+			if msg.Type == TypeHandshake {
 				// now we know the peer's NodeID - register them properly
 				conn.id = msg.From
 				n.addPeer(conn)
@@ -134,7 +134,7 @@ func (n *Node) serveConn(conn *Conn) {
 				// Send our own handshake back if we haven't yet
 				// (this  handles the serve side of the handshake)
 				reply := Message{
-					Type: TypHandshake,
+					Type: TypeHandshake,
 					From: n.ID,
 					ID:   "handshake",
 				}
@@ -206,4 +206,12 @@ func (n *Node) Shutdown() {
 	n.mu.RUnlock()
 
 	n.wg.Wait()
+}
+
+// Addr returns the address the node is listening on.
+func (n *Node) Addr() string {
+	if n.listener == nil {
+		return ""
+	}
+	return n.listener.Addr().String()
 }
