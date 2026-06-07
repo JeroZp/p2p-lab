@@ -13,9 +13,10 @@ import (
 type MessageType string
 
 const (
-	TypePing     MessageType = "ping"
-	TypePong     MessageType = "pong"
-	TypHandshake MessageType = "handshake"
+	TypePing      MessageType = "ping"
+	TypePong      MessageType = "pong"
+	TypeHandshake MessageType = "handshake"
+	TypeGossip	  MessageType = "gossip"
 )
 
 // Mesagge is the envelope for every message exchanged between nodes.
