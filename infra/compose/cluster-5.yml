@@ -1,0 +1,113 @@
+name: p2p-lab
+
+networks:
+  p2p-net:
+    driver: bridge
+
+services:
+  node1:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.go
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9101", "-key", "/data/node.key"]
+    volumes:
+      - node1-data:/data
+    networks:
+      - p2p-net
+    ports:
+      - "7001:7000"
+      - "9101:9101"
+
+  node2:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.go
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9102", "-key", "/data/node.key", "-dial", "node1:7000"]
+    volumes:
+      - node2-data:/data
+    networks:
+      - p2p-net
+    ports:
+      - "7002:7000"
+      - "9102:9102"
+    depends_on:
+      - node1
+
+  node3:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.go
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9103", "-key", "/data/node.key", "-dial", "node1:7000"]
+    volumes:
+      - node3-data:/data
+    networks:
+      - p2p-net
+    ports:
+      - "7003:7000"
+      - "9103:9103"
+    depends_on:
+      - node1
+
+  node4:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.go
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9104", "-key", "/data/node.key", "-dial", "node2:7000"]
+    volumes:
+      - node4-data:/data
+    networks:
+      - p2p-net
+    ports:
+      - "7004:7000"
+      - "9104:9104"
+    depends_on:
+      - node2
+
+  node5:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.go
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9105", "-key", "/data/node.key", "-dial", "node3:7000"]
+    volumes:
+      - node5-data:/data
+    networks:
+      - p2p-net
+    ports:
+      - "7005:7000"
+      - "9105:9105"
+    depends_on:
+      - node3
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    volumes:
+      - ../../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - p2p-net
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=1h"
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ../../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - p2p-net
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+  node4-data:
+  node5-data:

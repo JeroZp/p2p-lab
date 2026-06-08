@@ -23,7 +23,7 @@ build:
 	cd go && go build -o ../bin/node ./cmd/node
 
 cluster-up:
-	docker compose -f infra/compose/cluster-5.yml up -d
+	docker compose -f infra/compose/cluster-5.yml up --build -d
 
 cluster-down:
-	docker compose -f infra/compose/cluster-5.yml down
+	docker compose -f infra/compose/cluster-5.yml down -v
