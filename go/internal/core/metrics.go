@@ -29,6 +29,12 @@ func newCoreMetrics() *coreMetrics {
 
 	reg.MustRegister(connectionsActive, messagesSentTotal, messagesReceivedTotal)
 
+	// Initialize label combinations so metrics appear before first observation
+	for _, t := range []string{"ping", "pong", "handshake", "gossip"} {
+		messagesSentTotal.WithLabelValues(t).Add(0)
+		messagesReceivedTotal.WithLabelValues(t).Add(0)
+	}
+
 	return &coreMetrics{
 		registry:              reg,
 		connectionsActive:     connectionsActive,
