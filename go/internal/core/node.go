@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 
@@ -127,26 +128,29 @@ func (n *Node) serveConn(conn *Conn) {
 	defer n.wg.Done()
 	defer n.removePeer(conn.id)
 
+	handshakeDone := false
+
 	for {
 		select {
 		case msg := <-conn.inbound:
 			if msg.Type == TypeHandshake {
+				if handshakeDone {	// ignore duplicate handshakes
+					continue
+				}
 				// now we know the peer's NodeID - register them properly
 				conn.id = msg.From
 				n.addPeer(conn)
+				log.Printf("peer connected: %s", msg.From)
+				handshakeDone = true
 
-				// Send our own handshake back if we haven't yet
-				// (this  handles the serve side of the handshake)
-				reply := Message{
-					Type: TypeHandshake,
-					From: n.ID,
-					ID:   "handshake",
+				if conn.id != n.ID {
+					reply := Message{Type: TypeHandshake, From: n.ID, ID: "handshake"}
+					conn.Send(reply)
 				}
-				conn.Send(reply)
 				continue
 			}
 
-			n.metrics.messagesReceivedTotal.WithLabelValues(string(msg.ID)).Inc()
+			n.metrics.messagesReceivedTotal.WithLabelValues(string(msg.Type)).Inc()
 
 			// forward all other message to the node's inbound channel
 			select {
