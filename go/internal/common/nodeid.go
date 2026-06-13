@@ -96,3 +96,9 @@ func LoadOrCreate(path string) (KeyPair, NodeID, error) {
 	id := DeriveNodeID(kp.Public)
 	return kp, id, nil
 }
+
+// HashKey converts an arbitrary string key into a NodeID
+// using SHA-256, so keys live in the same ID space as nodes.
+func HashKey(key string) [32]byte {
+	return sha256.Sum256([]byte(key))
+}
