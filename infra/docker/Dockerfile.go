@@ -1,12 +1,15 @@
 # Build stage — compiles the Go binary
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
+
+# Install git - required by go mod download for some dependencies
+RUN apk add --no-cache git
 
 # Copy dependency files first — Docker caches this layer
 # so dependencies only re-download when go.mod changes
 COPY go/go.mod go/go.sum ./
-RUN go mod download
+RUN go mod download -x
 
 # Copy source and build
 COPY go/ .

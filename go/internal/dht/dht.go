@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/JeroZp/p2p-lab/internal/common"
 	"github.com/JeroZp/p2p-lab/internal/core"
 )
@@ -219,6 +222,14 @@ func (n *Node) sendRPC(to common.NodeID, msg core.Message, timeout time.Duration
 
 // FindNode runs an iterative lookup for the K closest nodes to target.
 func (n *Node) FindNode(target common.NodeID) []Entry {
+	ctx, span := common.Tracer.Start(context.Background(), "dht.lookup")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("dht.target", target.String()),
+		attribute.String("dht.self", n.node.ID.String()),
+	)
+
 	// Seed with our own closest known nodes
 	candidates := n.table.Closest(target, K)
 	if len(candidates) == 0 {
@@ -254,6 +265,14 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 			go func(c Entry) {
 				defer wg.Done()
 
+				// Child span per RPC hop
+				_, rpcSpan := common.Tracer.Start(ctx, "dht.rpc")
+				defer rpcSpan.End()
+				rpcSpan.SetAttributes(
+					attribute.String("dht.peer", c.ID.String()),
+					attribute.String("dht.peer_addr", c.Addr),
+				)
+
 				payloadBytes, _ := json.Marshal(FindNodePayload{
 					Target: target,
 					Addr:   n.addr,
@@ -267,8 +286,10 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 
 				reply, err := n.sendRPC(c.ID, msg, 5*time.Second)
 				if err != nil {
+					rpcSpan.SetStatus(codes.Error, err.Error())
 					return
 				}
+				rpcSpan.SetStatus(codes.Ok, "")
 
 				var replyPayload FindReplyPayload
 				if err := json.Unmarshal(reply.Payload, &replyPayload); err != nil {
@@ -312,6 +333,9 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 			break // no progress — we've converged
 		}
 	}
+
+	span.SetAttributes(attribute.Int("dht.results", len(candidates)))
+	span.SetStatus(codes.Ok, "")
 
 	if len(candidates) > K {
 		return candidates[:K]

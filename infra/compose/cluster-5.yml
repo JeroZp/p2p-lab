@@ -9,7 +9,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9101", "-key", "/data/node.key"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9101", "-key", "/data/node.key", "-otel", "otel-collector:4318"]
     volumes:
       - node1-data:/data
     networks:
@@ -22,7 +22,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9102", "-key", "/data/node.key", "-dial", "node1:7000"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9102", "-key", "/data/node.key", "-dial", "node1:7000", "-otel", "otel-collector:4318"]
     volumes:
       - node2-data:/data
     networks:
@@ -37,7 +37,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9103", "-key", "/data/node.key", "-dial", "node1:7000"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9103", "-key", "/data/node.key", "-dial", "node1:7000", "-otel", "otel-collector:4318"]
     volumes:
       - node3-data:/data
     networks:
@@ -52,7 +52,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9104", "-key", "/data/node.key", "-dial", "node2:7000"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9104", "-key", "/data/node.key", "-dial", "node2:7000", "-otel", "otel-collector:4318"]
     volumes:
       - node4-data:/data
     networks:
@@ -67,7 +67,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9105", "-key", "/data/node.key", "-dial", "node3:7000"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9105", "-key", "/data/node.key", "-dial", "node3:7000", "-otel", "otel-collector:4318"]
     volumes:
       - node5-data:/data
     networks:
@@ -104,6 +104,28 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    volumes:
+      - ../../observability/otel/collector.yml:/etc/otelcol-contrib/config.yml:ro
+    networks:
+      - p2p-net
+    ports:
+      - "4318:4318"   # OTLP HTTP receiver
+    depends_on:
+      - tempo
+
+  tempo:
+    image: grafana/tempo:2.4.0
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ../../observability/tempo/tempo.yml:/etc/tempo.yml:ro
+    networks:
+      - p2p-net
+    ports:
+      - "3200:3200"   # Tempo HTTP API
+      - "4317:4317"   # OTLP gRPC (used internally by collector)
 
 volumes:
   node1-data:
