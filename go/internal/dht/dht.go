@@ -11,6 +11,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/JeroZp/p2p-lab/internal/common"
 	"github.com/JeroZp/p2p-lab/internal/core"
 )
@@ -63,6 +65,8 @@ type Node struct {
 	store   map[string][]byte // local key-value storage
 	storeMu sync.RWMutex
 
+	metrics *dhtMetrics
+
 	pending   map[string]*pendingReply // in-flight RPCs keyed by message ID
 	pendingMu sync.Mutex
 
@@ -79,6 +83,7 @@ func NewDHTNode(node *core.Node, addr string) *Node {
 		addr:    addr,
 		table:   NewRoutingTable(node.ID),
 		store:   make(map[string][]byte),
+		metrics: newDHTMetrics(),
 		pending: make(map[string]*pendingReply),
 		ctx:     ctx,
 		cancel:  cancel,
@@ -222,8 +227,13 @@ func (n *Node) sendRPC(to common.NodeID, msg core.Message, timeout time.Duration
 
 // FindNode runs an iterative lookup for the K closest nodes to target.
 func (n *Node) FindNode(target common.NodeID) []Entry {
+	start := time.Now()
 	ctx, span := common.Tracer.Start(context.Background(), "dht.lookup")
 	defer span.End()
+	defer func ()  {
+		n.metrics.lookupDuration.Observe(time.Since(start).Seconds())
+		n.metrics.routingTableSize.Set(float64(n.table.Size()))
+	}()
 
 	span.SetAttributes(
 		attribute.String("dht.target", target.String()),
@@ -454,4 +464,8 @@ func (n *Node) FindValue(key string) ([]byte, bool) {
 func (n *Node) Stop() {
 	n.cancel()
 	n.wg.Wait()
+}
+
+func (n *Node) Registry() *prometheus.Registry {
+	return n.metrics.registry
 }
