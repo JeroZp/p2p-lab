@@ -65,6 +65,8 @@ type Node struct {
 	store   map[string][]byte // local key-value storage
 	storeMu sync.RWMutex
 
+	inbound <-chan core.Message
+
 	metrics *dhtMetrics
 
 	pending   map[string]*pendingReply // in-flight RPCs keyed by message ID
@@ -83,6 +85,7 @@ func NewDHTNode(node *core.Node, addr string) *Node {
 		addr:    addr,
 		table:   NewRoutingTable(node.ID),
 		store:   make(map[string][]byte),
+		inbound: node.Subscribe(128, typeFindNode, typeFindReply, typeStore, typeFindValue, typeValueReply),
 		metrics: newDHTMetrics(),
 		pending: make(map[string]*pendingReply),
 		ctx:     ctx,
@@ -101,7 +104,7 @@ func (n *Node) processLoop() {
 	defer n.wg.Done()
 	for {
 		select {
-		case msg := <-n.node.Inbound:
+		case msg := <-n.inbound:
 			n.handle(msg)
 		case <-n.ctx.Done():
 			return

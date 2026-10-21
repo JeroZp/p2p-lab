@@ -21,6 +21,9 @@ type Node struct {
 	peers    map[common.NodeID]*Conn
 	mu       sync.RWMutex
 
+	subs   map[MessageType]chan Message // type → subscriber channel
+	subsMu sync.RWMutex
+
 	Inbound chan Message // all received messages land here
 
 	metrics *coreMetrics
@@ -43,6 +46,7 @@ func NewNode(keyPath string) (*Node, error) {
 		ID:      id,
 		keyPair: kp,
 		peers:   make(map[common.NodeID]*Conn),
+		subs:    make(map[MessageType]chan Message),
 		Inbound: make(chan Message, 128),
 		metrics: newCoreMetrics(),
 		ctx:     ctx,
@@ -153,9 +157,7 @@ func (n *Node) serveConn(conn *Conn) {
 			n.metrics.messagesReceivedTotal.WithLabelValues(string(msg.Type)).Inc()
 
 			// forward all other message to the node's inbound channel
-			select {
-			case n.Inbound <- msg:
-			case <-n.ctx.Done():
+			if !n.dispatch(msg) {
 				return
 			}
 		case <-n.ctx.Done():
@@ -233,4 +235,34 @@ func (n *Node) Addr() string {
 // Registry returns the Prometheus registry for this node.
 func (n *Node) Registry() *prometheus.Registry {
 	return n.metrics.registry
+}
+
+// Subscribe returns a channel that receives every message whose type
+// is in types. Messages with no subscriber fall through to Inbound.
+// Call it before connecting to peers so no messages are missed.
+func (n *Node) Subscribe(buffer int, types ...MessageType) <-chan Message {
+	ch := make(chan Message, buffer)
+	n.subsMu.Lock()
+	defer n.subsMu.Unlock()
+	for _, t := range types {
+		n.subs[t] = ch
+	}
+	return ch
+}
+
+// dispatch delivers a message to its subscriber, or to Inbound if none.
+// Returns false if the node is shutting down.
+func (n *Node) dispatch(msg Message) bool {
+	n.subsMu.RLock()
+	ch, ok := n.subs[msg.Type]
+	n.subsMu.RUnlock()
+	if !ok {
+		ch = n.Inbound
+	}
+	select {
+	case ch <- msg:
+		return true
+	case <-n.ctx.Done():
+		return false
+	}
 }
