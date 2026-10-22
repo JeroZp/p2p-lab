@@ -472,3 +472,7 @@ func (n *Node) Stop() {
 func (n *Node) Registry() *prometheus.Registry {
 	return n.metrics.registry
 }
+
+func (n *Node) AddNode(e Entry) {
+	n.table.Add(e)
+}
