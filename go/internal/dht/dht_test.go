@@ -131,3 +131,26 @@ func TestDHT_MissingKey(t *testing.T) {
 		t.Error("expected key not found, but FindValue returned true")
 	}
 }
+
+func TestFindNode_NoDuplicatesOrSelf(t *testing.T) {
+	coreNodes, dhtNodes := buildDHTCluster(t, 5)
+	self := coreNodes[0].ID
+
+	results := dhtNodes[0].FindNode(self)
+
+	seen := make(map[common.NodeID]bool)
+	for _, e := range results {
+		if e.ID == self {
+			t.Error("FindNode returned the querying node itself")
+		}
+		if seen[e.ID] {
+			t.Errorf("duplicate entry: %s", e.ID)
+		}
+		seen[e.ID] = true
+	}
+
+	// 5-node cluster: exactly 4 other nodes exist
+	if len(results) != 4 {
+		t.Errorf("expected 4 unique nodes, got %d", len(results))
+	}
+}
