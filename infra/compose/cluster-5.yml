@@ -22,7 +22,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9102", "-key", "/data/node.key", "-dial", "node1:7000", "-otel", "otel-collector:4318"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9102", "-key", "/data/node.key", "-otel", "otel-collector:4318", "-dial", "node1:7000"]
     volumes:
       - node2-data:/data
     networks:
@@ -37,7 +37,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9103", "-key", "/data/node.key", "-dial", "node1:7000", "-otel", "otel-collector:4318"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9103", "-key", "/data/node.key", "-otel", "otel-collector:4318", "-dial", "node1:7000,node2:7000"]
     volumes:
       - node3-data:/data
     networks:
@@ -52,7 +52,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9104", "-key", "/data/node.key", "-dial", "node2:7000", "-otel", "otel-collector:4318"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9104", "-key", "/data/node.key", "-otel", "otel-collector:4318", "-dial", "node1:7000,node2:7000,node3:7000"]
     volumes:
       - node4-data:/data
     networks:
@@ -67,7 +67,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.go
-    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9105", "-key", "/data/node.key", "-dial", "node3:7000", "-otel", "otel-collector:4318"]
+    command: ["-addr", "0.0.0.0:7000", "-metrics", "0.0.0.0:9105", "-key", "/data/node.key", "-otel", "otel-collector:4318", "-dial", "node1:7000,node2:7000,node3:7000,node4:7000"]
     volumes:
       - node5-data:/data
     networks:
@@ -107,8 +107,9 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.96.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
-      - ../../observability/otel/collector.yml:/etc/otelcol-contrib/config.yml:ro
+      - ../../observability/otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     networks:
       - p2p-net
     ports:
