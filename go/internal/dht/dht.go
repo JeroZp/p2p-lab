@@ -252,6 +252,14 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 	queried := make(map[common.NodeID]bool)
 	queried[n.node.ID] = true
 
+	// seen tracks every node already in (or rejected from) candidates,
+	// so the same node is never added twice, and we never add ourselves.
+	seen := make(map[common.NodeID]bool)
+	seen[n.node.ID] = true
+	for _, c := range candidates {
+		seen[c.ID] = true
+	}
+
 	for {
 		// Pick alpha unqueried candidates closest to target
 		var toQuery []Entry
@@ -319,6 +327,11 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 		// Add new nodes to routing table and candidate list
 		added := false
 		for _, node := range newNodes {
+			if seen[node.ID] {
+				continue
+			}
+			seen[node.ID] = true
+
 			n.table.Add(node)
 			// Check if this node is closer than our current worst candidate
 			if len(candidates) < K {
@@ -409,6 +422,13 @@ func (n *Node) FindValue(key string) ([]byte, bool) {
 	queried := make(map[common.NodeID]bool)
 	queried[n.node.ID] = true
 
+	// the same as FindNode, but we also check for a value reply and return it if found
+	seen := make(map[common.NodeID]bool)
+	seen[n.node.ID] = true
+	for _, c := range candidates {
+		seen[c.ID] = true
+	}
+
 	for {
 		var toQuery []Entry
 		for _, c := range candidates {
@@ -451,6 +471,10 @@ func (n *Node) FindValue(key string) ([]byte, bool) {
 				var fr FindReplyPayload
 				if err := json.Unmarshal(reply.Payload, &fr); err == nil {
 					for _, e := range fr.Nodes {
+						if seen[e.ID] {
+							continue
+						}
+						seen[e.ID] = true
 						n.table.Add(e)
 						candidates = append(candidates, e)
 					}
