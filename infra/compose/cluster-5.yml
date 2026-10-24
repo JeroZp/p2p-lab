@@ -107,8 +107,9 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.96.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
-      - ../../observability/otel/collector.yml:/etc/otelcol-contrib/config.yml:ro
+      - ../../observability/otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     networks:
       - p2p-net
     ports:
