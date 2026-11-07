@@ -130,7 +130,8 @@ func (n *Node) Dial(addr string) error {
 // it handles the handshake and then forwards all messages to inbound.
 func (n *Node) serveConn(conn *Conn) {
 	defer n.wg.Done()
-	defer n.removePeer(conn.id)
+	defer n.removePeer(conn)
+	defer conn.close()
 
 	handshakeDone := false
 
@@ -160,6 +161,8 @@ func (n *Node) serveConn(conn *Conn) {
 			if !n.dispatch(msg) {
 				return
 			}
+		case <-conn.ctx.Done():
+			return
 		case <-n.ctx.Done():
 			return
 		}
@@ -174,12 +177,16 @@ func (n *Node) addPeer(conn *Conn) {
 	n.metrics.connectionsActive.Inc()
 }
 
-// removePeer removes a connection from the peer pool.
-func (n *Node) removePeer(id common.NodeID) {
+// removePeer removes a connection from the pool, but only if it is
+// still the registered connection for that peer. Prevents a stale
+// connection's cleanup from removing a newer connection to the same peer.
+func (n *Node) removePeer(conn *Conn) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	delete(n.peers, id)
-	n.metrics.connectionsActive.Dec()
+	if current, ok := n.peers[conn.id]; ok && current == conn {
+		delete(n.peers, conn.id)
+		n.metrics.connectionsActive.Dec()
+	}
 }
 
 func (n *Node) Send(to common.NodeID, msg Message) error {

@@ -89,3 +89,35 @@ func TestNode_ShutdownCleanly(t *testing.T) {
 		t.Fatal("Shutdown did not complete in time")
 	}
 }
+
+func TestNode_RemovesPeerWhenConnectionDies(t *testing.T) {
+	nodeA, err := NewNode(t.TempDir() + "/a.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeB, err := NewNode(t.TempDir() + "/b.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nodeA.Shutdown()
+
+	if err := nodeB.Listen("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeA.Dial(nodeB.Addr()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	if len(nodeA.Peers()) != 1 {
+		t.Fatalf("expected 1 peer before B dies, got %d", len(nodeA.Peers()))
+	}
+
+	// B goes away — A must notice and clean up
+	nodeB.Shutdown()
+	time.Sleep(300 * time.Millisecond)
+
+	if n := len(nodeA.Peers()); n != 0 {
+		t.Errorf("expected 0 peers after B died, got %d", n)
+	}
+}
