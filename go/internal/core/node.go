@@ -7,8 +7,17 @@ import (
 	"net"
 	"sync"
 
+	"math/rand"
+	"time"
+
 	"github.com/JeroZp/p2p-lab/internal/common"
 	"github.com/prometheus/client_golang/prometheus"
+)
+
+const (
+	reconcileInterval = 1 * time.Second
+	backoffBase       = 500 * time.Millisecond
+	backoffMax        = 5 * time.Second
 )
 
 // Node is a P2P node. It listens for incoming connections,
@@ -97,33 +106,32 @@ func (n *Node) acceptLoop() {
 	}
 }
 
-// Dial connects to a remote node at the given address and performs a handshake to exchange NodeIDs.
+// Dial connects to a peer once.
 func (n *Node) Dial(addr string) error {
-	tc, err := net.Dial("tcp", addr)
+	_, err := n.dialConn(addr)
+	return err
+}
+
+// dialConn connects to addr, sends our handshake, and returns the connection.
+func (n *Node) dialConn(addr string) (*Conn, error) {
+	tc, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", addr, err)
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
 
 	var placeholder common.NodeID
 	conn := newConn(n.ctx, placeholder, tc)
 	conn.start()
 
-	// Send our handshake immediatly so the remote node knows who we are
-	handshake := Message{
-		Type: TypeHandshake,
-		From: n.ID,
-		ID:   "handshake",
-	}
-
+	handshake := Message{Type: TypeHandshake, From: n.ID, ID: "handshake"}
 	if err := conn.Send(handshake); err != nil {
 		conn.close()
-		return fmt.Errorf("send hanshake: %w", err)
+		return nil, fmt.Errorf("send handshake: %w", err)
 	}
 
 	n.wg.Add(1)
 	go n.serveConn(conn)
-
-	return nil
+	return conn, nil
 }
 
 // serveConn reads messsages from a connection and routes them.
@@ -173,8 +181,12 @@ func (n *Node) serveConn(conn *Conn) {
 func (n *Node) addPeer(conn *Conn) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if old, ok := n.peers[conn.id]; ok && old != conn {
+		old.close() // its cleanup is a no-op: removePeer checks it's still registered
+	} else {
+		n.metrics.connectionsActive.Inc()
+	}
 	n.peers[conn.id] = conn
-	n.metrics.connectionsActive.Inc()
 }
 
 // removePeer removes a connection from the pool, but only if it is
@@ -272,4 +284,74 @@ func (n *Node) dispatch(msg Message) bool {
 	case <-n.ctx.Done():
 		return false
 	}
+}
+
+// Maintain keeps this node connected to every address in addrs.
+// If a connection dies, it is redialed with exponential backoff.
+// Runs in the background until the node shuts down.
+func (n *Node) Maintain(addrs []string) {
+	n.wg.Add(1)
+	go n.maintainLoop(addrs)
+}
+
+func (n *Node) maintainLoop(addrs []string) {
+	defer n.wg.Done()
+
+	type target struct {
+		conn    *Conn         // the connection we dialed, if any
+		backoff time.Duration // current backoff (without jitter)
+		nextTry time.Time     // don't dial before this
+	}
+	targets := make(map[string]*target, len(addrs))
+	for _, a := range addrs {
+		targets[a] = &target{}
+	}
+
+	ticker := time.NewTicker(reconcileInterval)
+	defer ticker.Stop()
+
+	for {
+		// Reconcile: desired = every address, actual = live connections
+		for addr, t := range targets {
+			if t.conn != nil && t.conn.State() == StateConnected {
+				t.backoff = 0
+				continue
+			}
+			if time.Now().Before(t.nextTry) {
+				continue
+			}
+
+			conn, err := n.dialConn(addr)
+			if err != nil {
+				t.backoff = nextBackoff(t.backoff)
+				t.nextTry = time.Now().Add(withJitter(t.backoff))
+				continue
+			}
+			t.conn = conn
+			log.Printf("connected to %s", addr)
+		}
+
+		select {
+		case <-ticker.C:
+		case <-n.ctx.Done():
+			return
+		}
+	}
+}
+
+// nextBackoff doubles the backoff, starting at backoffBase, capped at backoffMax.
+func nextBackoff(cur time.Duration) time.Duration {
+	if cur == 0 {
+		return backoffBase
+	}
+	if cur*2 > backoffMax {
+		return backoffMax
+	}
+	return cur * 2
+}
+
+// withJitter adds ±20% random variation so peers don't retry in lockstep.
+func withJitter(d time.Duration) time.Duration {
+	j := int64(d) / 5
+	return d + time.Duration(rand.Int63n(2*j+1)-j)
 }

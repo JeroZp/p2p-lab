@@ -17,6 +17,8 @@ const (
 	TypePong      MessageType = "pong"
 	TypeHandshake MessageType = "handshake"
 	TypeGossip	  MessageType = "gossip"
+
+	TypeHeartbeat  MessageType = "heartbeat"
 )
 
 // Mesagge is the envelope for every message exchanged between nodes.

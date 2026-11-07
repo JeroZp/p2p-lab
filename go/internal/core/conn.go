@@ -5,11 +5,18 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
+	"sync/atomic"
 
 	"github.com/JeroZp/p2p-lab/internal/common"
 )
 
 type ConnState int
+
+var (
+	heartbeatInterval = 2 * time.Second
+	heartbeatTimeout  = 6 * time.Second // 3 missed intervals
+)
 
 const (
 	StateConnection ConnState = iota
@@ -30,20 +37,24 @@ type Conn struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup // tracks read/write goroutines
+
+	lastSeen atomic.Int64 // unix nanos of the last message received from the peer
 }
 
 // newConn wraps an stablished net.Conn into a managed Conn.
-func newConn(ctx context.Context, peerID common.NodeID, c net.Conn) *Conn {
+func newConn(ctx context.Context, peerID common.NodeID, conn net.Conn) *Conn {
 	ctx, cancel := context.WithCancel(ctx)
-	return &Conn{
+	c := &Conn{
 		id:       peerID,
-		conn:     c,
+		conn:     conn,
 		state:    StateConnected,
 		outbound: make(chan Message, 32),
 		inbound:  make(chan Message, 32),
 		ctx:      ctx,
 		cancel:   cancel,
 	}
+	c.lastSeen.Store(time.Now().UnixNano())
+	return c
 }
 
 // State returns the current connection state.
@@ -75,27 +86,27 @@ func (c *Conn) Send(msg Message) error {
 // readLoop continuously reads messages from the TCP connection
 // and puts them on the inbound channel.
 func (c *Conn) readLoop() {
-	defer c.wg.Done()
-	defer c.close()
+    defer c.wg.Done()
+    defer c.close()
 
-	for {
-		msg, err := ReadMessage(c.conn)
-		if err != nil {
-			select {
-			case <-c.ctx.Done():
-				// shutdown was requested, not an error
-			default:
-				// unexpected error - peer probably died
-			}
-			return
-		}
+    for {
+        msg, err := ReadMessage(c.conn)
+        if err != nil {
+            return
+        }
 
-		select {
-		case c.inbound <- msg:
-		case <-c.ctx.Done():
-			return
-		}
-	}
+        c.lastSeen.Store(time.Now().UnixNano())
+
+        if msg.Type == TypeHeartbeat {
+            continue
+        }
+
+        select {
+        case c.inbound <- msg:
+        case <-c.ctx.Done():
+            return
+        }
+    }
 }
 
 // writeLoop continuously reads from the outbound channel
@@ -118,9 +129,10 @@ func (c *Conn) writeLoop() {
 
 // start launches the read and write goroutines.
 func (c *Conn) start() {
-	c.wg.Add(2)
+	c.wg.Add(3)
 	go c.readLoop()
 	go c.writeLoop()
+	go c.heartbeatLoop()
 }
 
 // close transitions the connection to dead and clean up resources.
@@ -135,4 +147,31 @@ func (c *Conn) close() {
 // Wait blocks until both goroutines have exited.
 func (c *Conn) Wait() {
 	c.wg.Wait()
+}
+
+// heartbeatLoop sends a heartbeat every interval and closes the
+// connection if nothing has been received for heartbeatTimeout.
+// This detects half-open connections (e.g. a network partition),
+// where no FIN/RST ever arrives.
+func (c *Conn) heartbeatLoop() {
+	defer c.wg.Done()
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			last := time.Unix(0, c.lastSeen.Load())
+			if time.Since(last) > heartbeatTimeout {
+				c.close() // the cleanup path from experiment 1 does the rest
+				return
+			}
+			select {
+			case c.outbound <- Message{Type: TypeHeartbeat}:
+			default: // queue full: we are already sending data, which counts
+			}
+		case <-c.ctx.Done():
+			return
+		}
+	}
 }

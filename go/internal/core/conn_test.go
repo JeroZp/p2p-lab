@@ -121,3 +121,49 @@ func TestConn_SendAfterClose(t *testing.T) {
 		t.Error("expected error sending on closed connection, got nil")
 	}
 }
+
+// shortHeartbeat speeds up heartbeats for a test and restores them after.
+func shortHeartbeat(t *testing.T) {
+	oldI, oldT := heartbeatInterval, heartbeatTimeout
+	heartbeatInterval, heartbeatTimeout = 50*time.Millisecond, 150*time.Millisecond
+	t.Cleanup(func() { heartbeatInterval, heartbeatTimeout = oldI, oldT })
+}
+
+func TestConn_HeartbeatClosesSilentConnection(t *testing.T) {
+	shortHeartbeat(t)
+	kp, _ := common.GenerateKeyPair()
+	peerID := common.DeriveNodeID(kp.Public)
+
+	// The server side is a raw socket that never writes anything:
+	// a peer that is unreachable, but never said goodbye.
+	clientConn, _ := setupPair(t)
+
+	c := newConn(context.Background(), peerID, clientConn)
+	c.start()
+
+	time.Sleep(400 * time.Millisecond)
+	if c.State() != StateDead {
+		t.Errorf("expected silent connection to be closed, state is %v", c.State())
+	}
+}
+
+func TestConn_HeartbeatKeepsIdleConnectionAlive(t *testing.T) {
+	shortHeartbeat(t)
+	kp, _ := common.GenerateKeyPair()
+	peerID := common.DeriveNodeID(kp.Public)
+
+	clientConn, serverConn := setupPair(t)
+	ctx := context.Background()
+	client := newConn(ctx, peerID, clientConn)
+	server := newConn(ctx, peerID, serverConn)
+	client.start()
+	server.start()
+	defer client.close()
+	defer server.close()
+
+	// No application messages at all, only heartbeats
+	time.Sleep(400 * time.Millisecond)
+	if client.State() != StateConnected || server.State() != StateConnected {
+		t.Error("idle but healthy connection should stay alive")
+	}
+}
