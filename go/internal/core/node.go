@@ -324,7 +324,9 @@ func (n *Node) maintainLoop(addrs []string) {
 			conn, err := n.dialConn(addr)
 			if err != nil {
 				t.backoff = nextBackoff(t.backoff)
-				t.nextTry = time.Now().Add(withJitter(t.backoff))
+				wait := withJitter(t.backoff)
+				t.nextTry = time.Now().Add(wait)
+				log.Printf("reconnect to %s failed: %v (retry in %v)", addr, err, wait.Round(100*time.Millisecond))
 				continue
 			}
 			t.conn = conn
