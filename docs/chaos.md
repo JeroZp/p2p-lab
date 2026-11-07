@@ -50,7 +50,23 @@ FIN/RST from the killed process, so no half-open connections here.
 **Hypothesis:** The fetch stays incomplete without enough chunks,
 with an error like "connection lost".
 
-**Observation / Result / Follow-up:** _TBD_
+**Method:** 90MB file shared on node1, fetched on node5, node1 killed
+~0.3s after the fetch started.
+
+**Observation:** HTTP 502 after 10.4s: "chunk 22: chunk request to node1
+timed out". Chunks 0-21 had already arrived and were kept by node5.
+
+**Result:** Mostly right: the fetch failed and the file stayed incomplete.
+But the error was a 10s timeout, not "connection lost". In-flight
+requests only wait for reply / timeout / engine stop and never learn the
+peer died, even though the core layer removed the peer within ms.
+Later chunks failed instantly ("no connection to peer").
+
+**Follow-up:** (1) fail pending requests when their peer disconnects;
+(2) consider cancelling remaining fetches when no other provider exists;
+(3) multiple providers per chunk, with retry on another provider.
+Partial chunks are preserved (resumable), but stranded: node5 does not
+announce them and node1 never rejoins (see experiment 3).
 
 ---
 
@@ -58,7 +74,22 @@ with an error like "connection lost".
 
 **Hypothesis:** It rejoins the network.
 
-**Observation / Result / Follow-up:** _TBD_
+**Observation:** Both restarted nodes kept their NodeID (key persisted
+in the Docker volume). node3 reconnected only to node1 and node2 (its
+`-dial` list): 2 connections; node4/node5 never redialed it. node1 has no
+`-dial` list and came back with 0 connections, bootstrap found 0 nodes.
+Sharing on node1 then fetching on node5 failed: HTTP 502, manifest not
+found (13ms).
+
+**Result:** Partially wrong. Identity survives restarts, but rejoining
+depends on the static `-dial` list. node3 rejoined partially; node1 (the
+bootstrap node) stayed isolated indefinitely. Recovery SLO (< 10s) not
+met for node1.
+
+**Follow-up:** Connectivity is established once at startup and never
+maintained. Needed: a reconnect loop with backoff, and peer discovery so
+nodes learn addresses beyond their static list. Also: a single bootstrap
+node is a single point of failure for joining.
 
 ---
 
@@ -66,12 +97,66 @@ with an error like "connection lost".
 
 **Hypothesis:** After healing, the node is not back in the P2P network.
 
-**Observation / Result / Follow-up:** _TBD_
+**Method:** `docker network disconnect` node3, check connection counts
+at 5s, 65s and ~185s (node3's own view via `docker exec`), then
+`docker network connect` and check again.
 
+**Observation:** At 5s and 65s every node, including the isolated node3,
+still reported 4 connections. By ~185s survivors reported 3 and node3
+reported 0. After healing, node3 stayed at 0 connections.
+
+**Result:** Heal prediction correct: node3 did not rejoin, even though
+it has a `-dial` list (dialing only happens at startup). New finding:
+a partition produces half-open connections. No FIN/RST is sent, our code
+has no liveness check, and detection relied on Go's default TCP
+keepalive (~15s idle + 9 probes × 15s ≈ 150s). For ~2.5 minutes metrics
+showed a healthy full mesh while node3 was unreachable.
+
+**Follow-up:** Application-level heartbeat using the unused TypePing /
+TypePong: ping every few seconds, close the connection after ~3 missed
+intervals. Plus connection maintenance (same as experiment 3).
 ---
 
 ## Experiment 5 — 200ms latency on one node
 
 **Hypothesis:** Only transfers get slower.
 
-**Observation / Result / Follow-up:** _TBD_
+**Method:** 200ms egress delay on node3 via `tc netem` (netshoot sidecar).
+Transfer-check node1 → node5 and node1 → node3, before and during.
+
+**Observation:**
+| | Baseline | 200ms on node3 |
+|---|---|---|
+| Share on node1 | 136 / 154 ms | 1936 / 1899 ms |
+| Fetch on node5 | 274 ms | 220 ms |
+| Fetch on node3 | 262 ms | 4760 ms |
+
+**Result:** Wrong. Transfers not involving node3 were unaffected (node5
+read DHT records from local replicas, chunks came from node1). DHT work
+on a healthy node got ~14x slower: each FindNode round waits for all
+alpha=3 replies, and node3 is in almost every round (tail latency
+amplification). Fetching on node3 got ~18x slower because the delay also
+applies to its TCP ACKs (bandwidth-delay product), landing at 4.76s,
+just under the 5s SLO.
+
+**Follow-up:** Lookups should not wait for the slowest peer: continue a
+round once enough replies arrive, use shorter per-RPC timeouts, demote
+slow peers.
+
+## Summary
+
+| # | Experiment | Prediction | Outcome |
+|---|---|---|---|
+| 1 | Kill non-provider node | Partially right | Found ghost peers + shutdown socket leak (fixed) |
+| 2 | Kill provider mid-transfer | Mostly right | Fails after a 10s timeout, not instantly |
+| 3 | Restart killed node | Partially wrong | Identity kept; rejoin is partial, bootstrap node isolated |
+| 4 | Partition, then heal | Right on heal | ~150s of half-open connections, no rejoin |
+| 5 | 200ms latency on one node | Wrong | Slows DHT on healthy nodes, not unrelated transfers |
+
+### Prioritized follow-ups
+
+1. Heartbeats with TypePing/TypePong: detect dead peers in seconds (exp 4)
+2. Connection maintenance: reconnect with backoff (exp 3, 4)
+3. Fail in-flight requests when their peer disconnects (exp 2)
+4. Multiple providers per chunk, retry on another provider (exp 2)
+5. Lookups that don't wait for the slowest peer (exp 5)

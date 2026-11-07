@@ -46,12 +46,13 @@ status:
 
 transfer-check:
 	@head -c 10M /dev/urandom > /tmp/chaos.bin
-	@ROOT=$$(curl -s --max-time 10 --data-binary @/tmp/chaos.bin localhost:910$(FROM)/share); \
-	echo "shared on node$(FROM), root: $$ROOT"; \
-	start=$$(date +%s%N); \
-	code=$$(curl -s --max-time 30 -o /tmp/chaos.out -w '%{http_code}' localhost:910$(TO)/fetch/$$ROOT); \
-	end=$$(date +%s%N); \
-	echo "fetch on node$(TO): HTTP $$code in $$(( (end - start) / 1000000 )) ms"; \
+	@s0=$$(date +%s%N); \
+	ROOT=$$(curl -s --max-time 60 --data-binary @/tmp/chaos.bin localhost:910$(FROM)/share); \
+	s1=$$(date +%s%N); \
+	echo "share on node$(FROM): $$(( (s1 - s0) / 1000000 )) ms, root: $$ROOT"; \
+	code=$$(curl -s --max-time 60 -o /tmp/chaos.out -w '%{http_code}' localhost:910$(TO)/fetch/$$ROOT); \
+	s2=$$(date +%s%N); \
+	echo "fetch on node$(TO): HTTP $$code in $$(( (s2 - s1) / 1000000 )) ms"; \
 	if [ "$$code" = "200" ]; then sha256sum /tmp/chaos.bin /tmp/chaos.out; else echo "error: $$(cat /tmp/chaos.out)"; fi
 
 # Failure injection
@@ -65,7 +66,7 @@ chaos-start:
 chaos-partition:
 	docker network disconnect $(NET) $(PROJECT)-node$(NODE)-1
 
-chaos- heal:
+chaos-heal:
 	docker network connect $(NET) $(PROJECT)-node$(NODE)-1
 
 chaos-slow:
