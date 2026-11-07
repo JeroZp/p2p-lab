@@ -1,4 +1,4 @@
-.PHONY: help run test lint build cluster-up cluster-down
+.PHONY: help run test lint build cluster-up cluster-down watch-status
 
 # Default target 
 help:
@@ -35,6 +35,7 @@ NODE    ?= 3
 LATENCY ?= 200ms
 FROM    ?= 1
 TO      ?= 5
+SECONDS ?= 15
 
 # Obeservation helpers
 
@@ -65,9 +66,9 @@ chaos-start:
 
 chaos-partition:
 	docker network disconnect $(NET) $(PROJECT)-node$(NODE)-1
-
+	
 chaos-heal:
-	docker network connect $(NET) $(PROJECT)-node$(NODE)-1
+	docker network connect --alias node$(NODE) $(NET) $(PROJECT)-node$(NODE)-1
 
 chaos-slow:
 	docker run --rm --network container:$(PROJECT)-node$(NODE)-1 --cap-add NET_ADMIN \
@@ -76,3 +77,14 @@ chaos-slow:
 chaos-fast:
 	docker run --rm --network container:$(PROJECT)-node$(NODE)-1 --cap-add NET_ADMIN \
 		nicolaka/netshoot tc qdisc del dev eth0 root
+
+watch-status:
+	@for t in $$(seq 1 $(SECONDS)); do \
+		line=""; \
+		for i in 1 2 3 4 5; do \
+			v=$$(curl -s --max-time 1 localhost:910$$i/metrics | awk '/^p2p_connections_active/ {print $$2}'); \
+			line="$$line n$$i=$${v:--}"; \
+		done; \
+		echo "t+$${t}s:$$line"; \
+		sleep 1; \
+	done

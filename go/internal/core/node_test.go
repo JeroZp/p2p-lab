@@ -121,3 +121,47 @@ func TestNode_RemovesPeerWhenConnectionDies(t *testing.T) {
 		t.Errorf("expected 0 peers after B died, got %d", n)
 	}
 }
+
+func waitFor(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+func TestNode_MaintainReconnectsAfterPeerRestart(t *testing.T) {
+	nodeB, _ := NewNode(t.TempDir() + "/b.key")
+	if err := nodeB.Listen("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	addr := nodeB.Addr()
+
+	nodeA, _ := NewNode(t.TempDir() + "/a.key")
+	defer nodeA.Shutdown()
+	nodeA.Maintain([]string{addr})
+
+	if !waitFor(3*time.Second, func() bool { return len(nodeA.Peers()) == 1 }) {
+		t.Fatal("A never connected to B")
+	}
+
+	// B "crashes"
+	nodeB.Shutdown()
+	if !waitFor(3*time.Second, func() bool { return len(nodeA.Peers()) == 0 }) {
+		t.Fatal("A did not notice B going away")
+	}
+
+	// B comes back on the same address
+	nodeB2, _ := NewNode(t.TempDir() + "/b2.key")
+	defer nodeB2.Shutdown()
+	if err := nodeB2.Listen(addr); err != nil {
+		t.Fatal(err)
+	}
+
+	if !waitFor(8*time.Second, func() bool { return len(nodeA.Peers()) == 1 }) {
+		t.Error("A did not reconnect to B after restart")
+	}
+}

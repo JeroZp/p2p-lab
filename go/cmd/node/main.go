@@ -68,14 +68,11 @@ func main() {
 
 	// --- Connect to peers ---
 	if *dialList != "" {
-		for _, peer := range strings.Split(*dialList, ",") {
-			peer = strings.TrimSpace(peer)
-			if err := dialWithRetry(node, peer); err != nil {
-				log.Printf("could not connect to %s: %v", peer, err)
-				continue
-			}
-			log.Printf("connected to %s", peer)
+		var peers []string
+		for _, p := range strings.Split(*dialList, ",") {
+			peers = append(peers, strings.TrimSpace(p))
 		}
+		node.Maintain(peers)
 	}
 
 	go bootstrapDHT(node, dhtNode)
@@ -116,19 +113,6 @@ func main() {
 	dhtNode.Stop()
 	gossipEngine.Stop()
 	node.Shutdown()
-}
-
-// dialWithRetry retries a dial a few times. In Docker, depends_on only
-// waits for the container to START, not for the peer to be listening.
-func dialWithRetry(node *core.Node, addr string) error {
-	var err error
-	for attempt := 1; attempt <= 10; attempt++ {
-		if err = node.Dial(addr); err == nil {
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return err
 }
 
 // bootstrapDHT keeps the routing table in sync with the connected peers.

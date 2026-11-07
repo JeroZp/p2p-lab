@@ -155,8 +155,32 @@ slow peers.
 
 ### Prioritized follow-ups
 
-1. Heartbeats with TypePing/TypePong: detect dead peers in seconds (exp 4)
-2. Connection maintenance: reconnect with backoff (exp 3, 4)
+1. ~~Heartbeats: detect dead peers in seconds (exp 4)~~ ✅ done
+2. ~~Connection maintenance: reconnect with backoff (exp 3, 4)~~ ✅ done
 3. Fail in-flight requests when their peer disconnects (exp 2)
 4. Multiple providers per chunk, retry on another provider (exp 2)
 5. Lookups that don't wait for the slowest peer (exp 5)
+
+---
+
+## Reruns after heartbeats and reconnection
+
+Changes: connections exchange heartbeats every 2s and close after 6s of
+silence; `Node.Maintain` redials lost peers with exponential backoff
+(500ms → 5s cap, ±20% jitter).
+
+| | Before | After |
+|---|---|---|
+| Restart node1 (exp 3) | 0 connections, forever | 4 connections at t+1s |
+| Partition detection (exp 4) | ~150s (TCP keepalive) | 6–9s (heartbeat) |
+| Rejoin after heal (exp 4) | never | ≤5s |
+| Recovery SLO (< 10s) | not met | met |
+
+**Tooling bug found during the rerun:** the first rerun showed node4/node5
+never reconnecting to node3 after healing. The new failure log revealed
+`lookup node3: no such host`: `docker network connect` reattached the
+container without its Compose service alias, so the name `node3` no
+longer resolved. The application was fine; the chaos "heal" step did not
+restore the original state. Fixed with `--alias node$(NODE)`. Lesson:
+verify that failure injection and recovery steps themselves are correct,
+or the experiment produces false conclusions.
