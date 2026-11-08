@@ -273,6 +273,8 @@ func (e *Engine) request(to common.NodeID, msg core.Message) (core.Message, erro
 		e.pendingMu.Unlock()
 	}()
 
+	peerDone := e.node.PeerDone(to)
+
 	if err := e.node.Send(to, msg); err != nil {
 		return core.Message{}, err
 	}
@@ -280,6 +282,8 @@ func (e *Engine) request(to common.NodeID, msg core.Message) (core.Message, erro
 	select {
 	case reply := <-ch:
 		return reply, nil
+	case <-peerDone:
+		return core.Message{}, fmt.Errorf("peer %s disconnected", to)
 	case <-time.After(chunkTimeout):
 		return core.Message{}, fmt.Errorf("chunk request to %s timed out", to)
 	case <-e.ctx.Done():
