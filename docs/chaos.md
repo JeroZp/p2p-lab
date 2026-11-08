@@ -157,7 +157,7 @@ slow peers.
 
 1. ~~Heartbeats: detect dead peers in seconds (exp 4)~~ ✅ done
 2. ~~Connection maintenance: reconnect with backoff (exp 3, 4)~~ ✅ done
-3. Fail in-flight requests when their peer disconnects (exp 2)
+3. ~~Fail in-flight requests when their peer disconnects (exp 2)~~ ✅ done
 4. Multiple providers per chunk, retry on another provider (exp 2)
 5. Lookups that don't wait for the slowest peer (exp 5)
 
@@ -175,6 +175,7 @@ silence; `Node.Maintain` redials lost peers with exponential backoff
 | Partition detection (exp 4) | ~150s (TCP keepalive) | 6–9s (heartbeat) |
 | Rejoin after heal (exp 4) | never | ≤5s |
 | Recovery SLO (< 10s) | not met | met |
+| Provider killed mid-transfer (exp 2) | fails after 10.4s timeout | fails in 0.37s ("peer disconnected") |
 
 **Tooling bug found during the rerun:** the first rerun showed node4/node5
 never reconnecting to node3 after healing. The new failure log revealed
