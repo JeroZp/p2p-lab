@@ -114,12 +114,12 @@ func TestDHT_StoreAndRetrieve(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Retrieve from node 4 — the far end of the cluster
-	value, found := dhtNodes[4].FindValue("hello")
+	values, found := dhtNodes[4].FindValue("hello")
 	if !found {
 		t.Fatal("FindValue: key not found")
 	}
-	if string(value) != "world" {
-		t.Errorf("got %q want %q", value, "world")
+	if len(values) != 1 || string(values[0]) != "world" {
+		t.Errorf("got %q, want [\"world\"]", values)
 	}
 }
 
