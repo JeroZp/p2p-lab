@@ -159,7 +159,7 @@ slow peers.
 2. ~~Connection maintenance: reconnect with backoff (exp 3, 4)~~ ✅ done
 3. ~~Fail in-flight requests when their peer disconnects (exp 2)~~ ✅ done
 4. ~~Multiple providers per chunk, retry on another provider (exp 2)~~ ✅ done
-5. Lookups that don't wait for the slowest peer (exp 5)
+5. ~~Lookups that don't wait for the slowest peer (exp 5)~~ ✅ done
 
 ---
 
@@ -186,3 +186,26 @@ longer resolved. The application was fine; the chaos "heal" step did not
 restore the original state. Fixed with `--alias node$(NODE)`. Lesson:
 verify that failure injection and recovery steps themselves are correct,
 or the experiment produces false conclusions.
+
+### Follow-up 5 rerun: 200ms latency on node3
+
+| | Baseline | Before fix | After fix |
+|---|---|---|---|
+| Share on node1 | 136–154 ms | 1899–1936 ms | 245–487 ms |
+| Fetch on node5 | 274 ms | 220 ms | 344 ms |
+
+Sharing is 4–8x faster: lookup rounds wait at most 50ms after the first
+reply instead of waiting for the slow peer.
+
+Fetching on node3 (not affected by the lookup change), 3 runs:
+`curl` 13.8 s / 6.1 s / 4.7 s; internal `FetchFile` 11.5 s / 3.7 s / 2.5 s.
+
+- ~2.2s of every `curl` measurement is the 10MB HTTP response leaving
+  node3 through its delayed interface, not P2P transfer time.
+- The first transfer after injecting latency is the slowest: TCP's RTT
+  estimate (~1ms) is suddenly wrong (~200ms), causing spurious
+  retransmissions and a shrunken window until it adapts.
+- The original experiment 5 value (4760 ms) was a single sample.
+
+Measurement lessons for the SLO work: use several runs, and measure at
+the right layer (`transfer-check` includes HTTP delivery time).

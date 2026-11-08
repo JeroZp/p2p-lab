@@ -154,3 +154,35 @@ func TestFindNode_NoDuplicatesOrSelf(t *testing.T) {
 		t.Errorf("expected 4 unique nodes, got %d", len(results))
 	}
 }
+
+func TestFindNode_DoesNotWaitForUnresponsivePeer(t *testing.T) {
+	coreNodes, dhtNodes := buildDHTCluster(t, 4)
+
+	// A connected peer that never answers DHT requests
+	silent, err := core.NewNode(t.TempDir() + "/silent.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := silent.Listen("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer silent.Shutdown()
+
+	for i, d := range dhtNodes {
+		if err := coreNodes[i].Dial(silent.Addr()); err != nil {
+			t.Fatal(err)
+		}
+		d.AddNode(Entry{ID: silent.ID, Addr: silent.Addr()})
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Looking up the silent node's own ID guarantees it is queried
+	start := time.Now()
+	dhtNodes[0].FindNode(silent.ID)
+	elapsed := time.Since(start)
+
+	t.Logf("lookup took %v", elapsed)
+	if elapsed > time.Second {
+		t.Errorf("lookup waited for the unresponsive peer (%v)", elapsed)
+	}
+}
