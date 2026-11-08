@@ -357,3 +357,20 @@ func withJitter(d time.Duration) time.Duration {
 	j := int64(d) / 5
 	return d + time.Duration(rand.Int63n(2*j+1)-j)
 }
+
+// PeerDone returns a channel that is closed when the connection to
+// peer id dies. If the peer is not connected, the channel is already
+// closed. Code waiting on a reply from a peer should select on it,
+// so it fails immediately instead of waiting for a timeout.
+func (n *Node) PeerDone(id common.NodeID) <-chan struct{} {
+	n.mu.RLock()
+	conn, ok := n.peers[id]
+	n.mu.RUnlock()
+
+	if !ok {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	return conn.ctx.Done()
+}

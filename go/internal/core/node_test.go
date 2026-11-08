@@ -165,3 +165,35 @@ func TestNode_MaintainReconnectsAfterPeerRestart(t *testing.T) {
 		t.Error("A did not reconnect to B after restart")
 	}
 }
+
+func TestNode_PeerDoneClosesWhenPeerDies(t *testing.T) {
+	nodeA, _ := NewNode(t.TempDir() + "/a.key")
+	nodeB, _ := NewNode(t.TempDir() + "/b.key")
+	defer nodeA.Shutdown()
+
+	if err := nodeB.Listen("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeA.Dial(nodeB.Addr()); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(2*time.Second, func() bool { return len(nodeA.Peers()) == 1 }) {
+		t.Fatal("A never registered B")
+	}
+
+	done := nodeA.PeerDone(nodeB.ID)
+	select {
+	case <-done:
+		t.Fatal("done channel closed while B is still alive")
+	default:
+	}
+
+	nodeB.Shutdown()
+
+	select {
+	case <-done:
+		// closed as soon as the connection died
+	case <-time.After(2 * time.Second):
+		t.Error("done channel not closed after B died")
+	}
+}

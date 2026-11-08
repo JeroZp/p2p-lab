@@ -214,6 +214,8 @@ func (n *Node) sendRPC(to common.NodeID, msg core.Message, timeout time.Duration
 		n.pendingMu.Unlock()
 	}()
 
+	peerDone := n.node.PeerDone(to)
+
 	if err := n.node.Send(to, msg); err != nil {
 		return core.Message{}, err
 	}
@@ -221,6 +223,8 @@ func (n *Node) sendRPC(to common.NodeID, msg core.Message, timeout time.Duration
 	select {
 	case reply := <-ch:
 		return reply, nil
+	case <-peerDone:
+		return core.Message{}, fmt.Errorf("peer %s disconnected", to)
 	case <-time.After(timeout):
 		return core.Message{}, fmt.Errorf("RPC timeout to %s", to)
 	case <-n.ctx.Done():

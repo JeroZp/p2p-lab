@@ -103,3 +103,46 @@ func TestTransfer_UnknownRootFails(t *testing.T) {
 		t.Error("expected error for unknown root")
 	}
 }
+
+func TestTransfer_FailsFastWhenProviderDies(t *testing.T) {
+	engines := buildTransferCluster(t, 3)
+
+	data := make([]byte, 3*1024*1024)
+	rand.Read(data)
+	path := t.TempDir() + "/file.bin"
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := engines[0].Share(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Provider stops answering: requests to it would hang until timeout
+	engines[0].Stop()
+
+	errCh := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := engines[2].FetchFile(m.Root)
+		errCh <- err
+	}()
+
+	// Provider dies while the fetch is waiting on it
+	time.Sleep(200 * time.Millisecond)
+	engines[0].node.Shutdown()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected fetch to fail")
+		}
+		elapsed := time.Since(start)
+		t.Logf("failed after %v: %v", elapsed, err)
+		if elapsed > 2*time.Second {
+			t.Errorf("fetch took %v to fail, expected well under chunkTimeout (%v)", elapsed, chunkTimeout)
+		}
+	case <-time.After(chunkTimeout + 5*time.Second):
+		t.Fatal("fetch never returned")
+	}
+}
