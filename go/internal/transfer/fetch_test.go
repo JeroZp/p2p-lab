@@ -146,3 +146,54 @@ func TestTransfer_FailsFastWhenProviderDies(t *testing.T) {
 		t.Fatal("fetch never returned")
 	}
 }
+
+func TestTransfer_FetchSurvivesOriginalProviderLoss(t *testing.T) {
+	engines := buildTransferCluster(t, 4)
+
+	data := make([]byte, 3*1024*1024)
+	rand.Read(data)
+	path := t.TempDir() + "/file.bin"
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := engines[0].Share(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// node1 downloads the file and becomes a second provider
+	if _, err := engines[1].FetchFile(m.Root); err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+
+	// Wait until node3 sees 2 providers for every chunk
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		ready := true
+		for _, h := range m.Chunks {
+			if vals, _ := engines[3].dht.FindValue(chunkKey(h)); len(vals) < 2 {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("node1 never announced itself as a provider")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// The original provider dies
+	engines[0].node.Shutdown()
+
+	// node3 must still get the file, from node1
+	out, err := engines[3].FetchFile(m.Root)
+	if err != nil {
+		t.Fatalf("fetch after original provider died: %v", err)
+	}
+	if !bytes.Equal(out, data) {
+		t.Error("fetched file does not match original")
+	}
+}

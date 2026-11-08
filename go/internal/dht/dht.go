@@ -1,6 +1,7 @@
 package dht
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,9 @@ import (
 
 // alpha is the concurrency parameter - how many parallel RPCs during lookup.
 const alpha = 3
+
+// maxValuesPerKey caps the set, so a popular key can't grow forever.
+const maxValuesPerKey = 20
 
 // DHT message types
 const (
@@ -48,7 +52,7 @@ type StorePayload struct {
 
 // ValueReplyPayload carries a found value back to the requester.
 type ValueReplyPayload struct {
-	Value []byte `json:"value"`
+	Values [][]byte `json:"values"`
 }
 
 // pendingReply tracks an in-flight RPC waiting for a response.
@@ -62,7 +66,7 @@ type Node struct {
 	node    *core.Node
 	addr    string // this node's listening address
 	table   *RoutingTable
-	store   map[string][]byte // local key-value storage
+	store   map[string][][]byte // key -> set of values
 	storeMu sync.RWMutex
 
 	inbound <-chan core.Message
@@ -84,7 +88,7 @@ func NewDHTNode(node *core.Node, addr string) *Node {
 		node:    node,
 		addr:    addr,
 		table:   NewRoutingTable(node.ID),
-		store:   make(map[string][]byte),
+		store:   make(map[string][][]byte),
 		inbound: node.Subscribe(128, typeFindNode, typeFindReply, typeStore, typeFindValue, typeValueReply),
 		metrics: newDHTMetrics(),
 		pending: make(map[string]*pendingReply),
@@ -156,11 +160,11 @@ func (n *Node) handleFindValue(msg core.Message) {
 	}
 
 	n.storeMu.RLock()
-	value, found := n.store[payload.Key]
+	values, found := n.store[payload.Key]
 	n.storeMu.RUnlock()
 
 	if found {
-		replyPayload, _ := json.Marshal(ValueReplyPayload{Value: value})
+		replyPayload, _ := json.Marshal(ValueReplyPayload{Values: values}) // return the first value found
 		reply := core.Message{
 			Type:    typeValueReply,
 			From:    n.node.ID,
@@ -181,9 +185,7 @@ func (n *Node) handleStore(msg core.Message) {
 	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 		return
 	}
-	n.storeMu.Lock()
-	n.store[payload.Key] = payload.Value
-	n.storeMu.Unlock()
+	n.addValue(payload.Key, payload.Value)
 }
 
 // handleReply delivers an RPC reply to the waiting goroutine.
@@ -237,7 +239,7 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 	start := time.Now()
 	ctx, span := common.Tracer.Start(context.Background(), "dht.lookup")
 	defer span.End()
-	defer func ()  {
+	defer func() {
 		n.metrics.lookupDuration.Observe(time.Since(start).Seconds())
 		n.metrics.routingTableSize.Set(float64(n.table.Size()))
 	}()
@@ -390,9 +392,7 @@ func sortByDistance(entries []Entry, target common.NodeID) {
 // Store saves a key-value pair at the K closest nodes to the key.
 func (n *Node) Store(key string, value []byte) error {
 	// Always store locally as well as at closest nodes
-	n.storeMu.Lock()
-	n.store[key] = value
-	n.storeMu.Unlock()
+	n.addValue(key, value)
 
 	keyID := common.NodeID(common.HashKey(key))
 	closest := n.FindNode(keyID)
@@ -412,13 +412,16 @@ func (n *Node) Store(key string, value []byte) error {
 }
 
 // FindValue retrieves a value by key from the DHT.
-func (n *Node) FindValue(key string) ([]byte, bool) {
+func (n *Node) FindValue(key string) ([][]byte, bool) {
+	if values, ok := n.localValues(key); ok {
+		return values, true
+	}
 	// Check local store first
 	n.storeMu.RLock()
-	value, found := n.store[key]
+	values, found := n.store[key]
 	n.storeMu.RUnlock()
 	if found {
-		return value, true
+		return values, true
 	}
 
 	keyID := common.NodeID(common.HashKey(key))
@@ -465,8 +468,8 @@ func (n *Node) FindValue(key string) ([]byte, bool) {
 
 			if reply.Type == typeValueReply {
 				var vr ValueReplyPayload
-				if err := json.Unmarshal(reply.Payload, &vr); err == nil {
-					return vr.Value, true
+				if err := json.Unmarshal(reply.Payload, &vr); err == nil && len(vr.Values) > 0 {
+					return vr.Values, true
 				}
 			}
 
@@ -503,4 +506,32 @@ func (n *Node) Registry() *prometheus.Registry {
 
 func (n *Node) AddNode(e Entry) {
 	n.table.Add(e)
+}
+
+// addValue adds value to the set stored under key, ignoring duplicates.
+func (n *Node) addValue(key string, value []byte) {
+	n.storeMu.Lock()
+	defer n.storeMu.Unlock()
+	for _, v := range n.store[key] {
+		if bytes.Equal(v, value) {
+			return
+		}
+	}
+	if len(n.store[key]) >= maxValuesPerKey {
+		n.store[key] = n.store[key][1:] // drop the oldest
+	}
+	n.store[key] = append(n.store[key], value)
+}
+
+// localValues returns a copy of the values stored locally under key.
+func (n *Node) localValues(key string) ([][]byte, bool) {
+	n.storeMu.RLock()
+	defer n.storeMu.RUnlock()
+	vals, ok := n.store[key]
+	if !ok {
+		return nil, false
+	}
+	out := make([][]byte, len(vals))
+	copy(out, vals)
+	return out, true
 }

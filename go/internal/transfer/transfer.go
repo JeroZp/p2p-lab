@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"math/rand"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -142,14 +144,14 @@ func (e *Engine) FetchFile(root [32]byte) ([]byte, error) {
 	defer span.End()
 	span.SetAttributes(attribute.String("transfer.root", hex.EncodeToString(root[:])))
 
-	raw, ok := e.dht.FindValue(manifestKey(root))
+	values, ok := e.dht.FindValue(manifestKey(root))
 	if !ok {
 		span.SetStatus(codes.Error, "manifest not found")
 		return nil, fmt.Errorf("manifest not found for root %x", root[:8])
 	}
 
 	var m Manifest
-	if err := json.Unmarshal(raw, &m); err != nil {
+	if err := json.Unmarshal(values[0], &m); err != nil {
 		return nil, fmt.Errorf("decode manifest: %w", err)
 	}
 
@@ -201,12 +203,34 @@ func (e *Engine) FetchFile(root [32]byte) ([]byte, error) {
 		}
 	}
 
-	span.SetAttributes(attribute.Int("transfer.chunks", len(results)))
-	return Reassemble(results)
+	data, err := Reassemble(results)
+	if err != nil {
+		return nil, err
+	}
+
+	// We now hold every chunk: become a provider (seeding)
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.announce(m.Chunks)
+	}()
+
+	return data, nil
 }
 
-// fetchChunk returns a chunk from local storage, or finds a provider
-// in the DHT and requests the chunk from it.
+// announce registers this node as a provider for the given chunks.
+func (e *Engine) announce(chunks [][32]byte) {
+	provider, _ := json.Marshal(Provider{ID: e.node.ID, Addr: e.addr})
+	for _, h := range chunks {
+		if e.ctx.Err() != nil {
+			return // engine stopping
+		}
+		e.dht.Store(chunkKey(h), provider)
+	}
+}
+
+// fetchChunk returns a chunk from local storage, or tries every known
+// provider in random order until one returns a valid chunk.
 func (e *Engine) fetchChunk(h [32]byte) ([]byte, error) {
 	e.chunksMu.RLock()
 	data, ok := e.chunks[h]
@@ -215,15 +239,35 @@ func (e *Engine) fetchChunk(h [32]byte) ([]byte, error) {
 		return data, nil
 	}
 
-	raw, ok := e.dht.FindValue(chunkKey(h))
+	values, ok := e.dht.FindValue(chunkKey(h))
 	if !ok {
 		return nil, fmt.Errorf("no provider for chunk %x", h[:8])
 	}
-	var p Provider
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, fmt.Errorf("decode provider: %w", err)
-	}
 
+	// Random order spreads load across providers, instead of every
+	// downloader hitting the same one.
+	rand.Shuffle(len(values), func(i, j int) { values[i], values[j] = values[j], values[i] })
+
+	var lastErr error
+	for _, raw := range values {
+		var p Provider
+		if err := json.Unmarshal(raw, &p); err != nil || p.ID == e.node.ID {
+			continue
+		}
+		data, err := e.requestChunk(p, h)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err // dead, slow or lying provider: try the next one
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no reachable provider for chunk %x", h[:8])
+	}
+	return nil, lastErr
+}
+
+// requestChunk asks one provider for a chunk and verifies it.
+func (e *Engine) requestChunk(p Provider, h [32]byte) ([]byte, error) {
 	payload, _ := json.Marshal(chunkRequest{Hash: h})
 	msg := core.Message{
 		Type:    typeChunkRequest,
@@ -231,7 +275,6 @@ func (e *Engine) fetchChunk(h [32]byte) ([]byte, error) {
 		ID:      fmt.Sprintf("cr-%d", e.seq.Add(1)),
 		Payload: payload,
 	}
-
 	reply, err := e.request(p.ID, msg)
 	if err != nil {
 		return nil, err
@@ -239,25 +282,21 @@ func (e *Engine) fetchChunk(h [32]byte) ([]byte, error) {
 
 	var cr chunkReply
 	if err := json.Unmarshal(reply.Payload, &cr); err != nil {
-		return nil, fmt.Errorf("decode chunk reply: %w", err)
+		return nil, fmt.Errorf("decode reply: %w", err)
 	}
 	if !cr.Found {
-		return nil, fmt.Errorf("provider %s does not have chunk", p.ID)
+		return nil, fmt.Errorf("provider %s does not have chunk %x", p.ID, h[:8])
 	}
-
-	// Never trust a peer: verify before accepting.
 	if sha256.Sum256(cr.Data) != h {
 		e.metrics.verifyFailures.Inc()
-		return nil, fmt.Errorf("peer %s sent corrupted chunk", p.ID)
+		return nil, fmt.Errorf("chunk %x from provider %s failed hash check", h[:8], p.ID)
 	}
 
 	e.metrics.bytesTotal.Add(float64(len(cr.Data)))
 
-	// Keep it, so this node can serve the chunk to others too.
 	e.chunksMu.Lock()
 	e.chunks[h] = cr.Data
 	e.chunksMu.Unlock()
-
 	return cr.Data, nil
 }
 
