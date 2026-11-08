@@ -24,6 +24,11 @@ const alpha = 3
 // maxValuesPerKey caps the set, so a popular key can't grow forever.
 const maxValuesPerKey = 20
 
+// stragglerWait is how long a lookup round waits for the remaining
+// replies once the first one has arrived. Slow peers don't hold up
+// the whole lookup.
+const stragglerWait = 50 * time.Millisecond
+
 // DHT message types
 const (
 	typeFindNode   core.MessageType = "dht_find_node"
@@ -281,18 +286,13 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 			break
 		}
 
-		// Query them in parallel
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		newNodes := make([]Entry, 0)
+		// Buffered for every RPC: late goroutines can always send their
+		// result and exit, even after this round has moved on.
+		replies := make(chan []Entry, len(toQuery))
 
 		for _, candidate := range toQuery {
 			queried[candidate.ID] = true
-			wg.Add(1)
 			go func(c Entry) {
-				defer wg.Done()
-
-				// Child span per RPC hop
 				_, rpcSpan := common.Tracer.Start(ctx, "dht.rpc")
 				defer rpcSpan.End()
 				rpcSpan.SetAttributes(
@@ -300,10 +300,7 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 					attribute.String("dht.peer_addr", c.Addr),
 				)
 
-				payloadBytes, _ := json.Marshal(FindNodePayload{
-					Target: target,
-					Addr:   n.addr,
-				})
+				payloadBytes, _ := json.Marshal(FindNodePayload{Target: target, Addr: n.addr})
 				msg := core.Message{
 					Type:    typeFindNode,
 					From:    n.node.ID,
@@ -314,21 +311,37 @@ func (n *Node) FindNode(target common.NodeID) []Entry {
 				reply, err := n.sendRPC(c.ID, msg, 5*time.Second)
 				if err != nil {
 					rpcSpan.SetStatus(codes.Error, err.Error())
+					replies <- nil
+					return
+				}
+
+				var rp FindReplyPayload
+				if err := json.Unmarshal(reply.Payload, &rp); err != nil {
+					replies <- nil
 					return
 				}
 				rpcSpan.SetStatus(codes.Ok, "")
-
-				var replyPayload FindReplyPayload
-				if err := json.Unmarshal(reply.Payload, &replyPayload); err != nil {
-					return
-				}
-
-				mu.Lock()
-				newNodes = append(newNodes, replyPayload.Nodes...)
-				mu.Unlock()
+				replies <- rp.Nodes
 			}(candidate)
 		}
-		wg.Wait()
+
+		// Collect replies until all are in, or until stragglerWait
+		// has passed since the first successful reply.
+		var newNodes []Entry
+		var straggler <-chan time.Time // nil = timer not started yet
+	collect:
+		for received := 0; received < len(toQuery); {
+			select {
+			case nodes := <-replies:
+				received++
+				newNodes = append(newNodes, nodes...)
+				if nodes != nil && straggler == nil {
+					straggler = time.After(stragglerWait)
+				}
+			case <-straggler:
+				break collect // don't wait for slow peers
+			}
+		}
 
 		// Add new nodes to routing table and candidate list
 		added := false
