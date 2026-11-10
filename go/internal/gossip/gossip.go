@@ -26,8 +26,9 @@ const seenTTL = 10 * time.Minute
 
 // GossipPayload is carried inside a core.Message's Payload field.
 type GossipPayload struct {
-	TTL  int    `json:"ttl"`
-	Data []byte `json:"data"`
+	TTL  	int    `json:"ttl"`
+	Data 	[]byte `json:"data"`
+	SentAt  int64  `json:"sent_at"`
 }
 
 // seenEntry tracks when we swa a message so we can expire old entries.
@@ -100,6 +101,7 @@ func (e *Engine) Broadcast(data []byte) error {
 	payload := GossipPayload{
 		TTL:  defaultTTL,
 		Data: data,
+		SentAt: time.Now().UnixNano(),
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -157,6 +159,11 @@ func (e *Engine) handle(msg core.Message) {
 		return
 	}
 	e.markSeen(msg.ID)
+	
+	if payload.SentAt > 0 {
+		latency := time.Since(time.Unix(0, payload.SentAt))
+		e.metrics.deliveryLatency.Observe(latency.Seconds())
+	}
 
 	// deliver to the application layer
 	select {
