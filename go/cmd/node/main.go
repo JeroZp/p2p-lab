@@ -89,6 +89,18 @@ func main() {
 	mux.Handle("/metrics", promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}))
 	mux.HandleFunc("POST /share", shareHandler(transferEngine))
 	mux.HandleFunc("GET /fetch/{root}", fetchHandler(transferEngine))
+	mux.HandleFunc("POST /gossip", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			http.Error(w, "read fail: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := gossipEngine.Broadcast(body); err != nil {
+			http.Error(w, "broadcast fail: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
 
 	go func() {
 		log.Printf("HTTP (metrics + API) on http://%s", *httpAddr)

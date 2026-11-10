@@ -25,21 +25,21 @@ const (
 	typeChunkRequest core.MessageType = "chunk_request"
 	typeChunkReply   core.MessageType = "chunk_reply"
 
-	maxParallel = 4						// chunks fetched at the same time
-	chunkTimeout = 10 * time.Second		// per-chunk request timeout
+	maxParallel  = 4                // chunks fetched at the same time
+	chunkTimeout = 10 * time.Second // per-chunk request timeout
 )
 
 // Manifest describes a shared file. It is stored in the DHT under the root hash.
 type Manifest struct {
-	Root	[32]byte	`json:"root"`
-	Size	int64		`json:"size"`
-	Chunks	[][32]byte	`json:"chunks"`
+	Root   [32]byte   `json:"root"`
+	Size   int64      `json:"size"`
+	Chunks [][32]byte `json:"chunks"`
 }
 
 // Provider is stored in the DHT under each chunk hash: "who has this chunk?"
 type Provider struct {
-	ID		common.NodeID	`json:"id"`
-	Addr	string			`json:"addr"`
+	ID   common.NodeID `json:"id"`
+	Addr string        `json:"addr"`
 }
 
 type chunkRequest struct {
@@ -76,8 +76,8 @@ type Engine struct {
 func NewEngine(node *core.Node, d *dht.Node, addr string) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
-		node:	 node,
-		dht:	 d,
+		node:    node,
+		dht:     d,
 		addr:    addr,
 		inbound: node.Subscribe(64, typeChunkRequest, typeChunkReply),
 		metrics: newTransferMetrics(),
@@ -139,7 +139,17 @@ func (e *Engine) Share(path string) (Manifest, error) {
 // FetchFile downloads a file by its Merkle root. It trusts nothing
 // from peers: the manifest is checked against the root, and every
 // chunk is checked against its hash.
-func (e *Engine) FetchFile(root [32]byte) ([]byte, error) {
+func (e *Engine) FetchFile(root [32]byte) (data []byte, err error) {
+	start := time.Now()
+	defer func() {
+		if err != nil {
+			e.metrics.fetchesTotal.WithLabelValues("error").Inc()
+			return
+		}
+		e.metrics.fetchesTotal.WithLabelValues("ok").Inc()
+		e.metrics.fetchDuration.Observe(time.Since(start).Seconds())
+	}()
+
 	ctx, span := common.Tracer.Start(context.Background(), "transfer.fetch_file")
 	defer span.End()
 	span.SetAttributes(attribute.String("transfer.root", hex.EncodeToString(root[:])))
@@ -203,7 +213,7 @@ func (e *Engine) FetchFile(root [32]byte) ([]byte, error) {
 		}
 	}
 
-	data, err := Reassemble(results)
+	data, err = Reassemble(results)
 	if err != nil {
 		return nil, err
 	}
