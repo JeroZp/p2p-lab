@@ -1,4 +1,4 @@
-.PHONY: help run test lint build cluster-up cluster-down watch-status
+.PHONY: help run test lint build cluster-up cluster-down watch-status integration 
 
 # Default target 
 help:
@@ -88,3 +88,8 @@ watch-status:
 		echo "t+$${t}s:$$line"; \
 		sleep 1; \
 	done
+
+# Integration tests
+
+integration:
+	bash scripts/integration-test.sh
