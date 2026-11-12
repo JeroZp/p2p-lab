@@ -132,23 +132,8 @@ func main() {
 // the next tick. Our DHT sends RPCs by NodeID, so the ID is enough.
 func bootstrapDHT(node *core.Node, d *dht.Node) {
 	time.Sleep(2 * time.Second)
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	first := true
-	for {
-		for _, id := range node.Peers() {
-			d.AddNode(dht.Entry{ID: id})
-		}
-		if first {
-			found := d.FindNode(node.ID)
-			log.Printf("DHT bootstrap: %d peers connected, lookup found %d nodes",
-				len(node.Peers()), len(found))
-			first = false
-		}
-		<-ticker.C
-	}
+	found := d.FindNode(node.ID)
+	log.Printf("DHT bootstrap: %d peers connected, lookup found %d nodes", len(node.Peers()), len(found))
 }
 
 // shareHandler: POST /share with the file as the request body.

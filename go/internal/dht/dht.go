@@ -89,7 +89,7 @@ type Node struct {
 // NewDHTNode creates a DHT node on top of an existing core.Node.
 func NewDHTNode(node *core.Node, addr string) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Node{
+	d := &Node{
 		node:    node,
 		addr:    addr,
 		table:   NewRoutingTable(node.ID),
@@ -100,6 +100,12 @@ func NewDHTNode(node *core.Node, addr string) *Node {
 		ctx:     ctx,
 		cancel:  cancel,
 	}
+	
+	// Add every peer to the routing table as soon as it connects
+	node.OnPeerConnected(func(id common.NodeID) {
+		d.table.Add(Entry{ID: id})
+	})
+	return d
 }
 
 // Start launches the DHT's message processing loop.

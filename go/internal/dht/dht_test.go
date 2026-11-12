@@ -186,3 +186,39 @@ func TestFindNode_DoesNotWaitForUnresponsivePeer(t *testing.T) {
 		t.Errorf("lookup waited for the unresponsive peer (%v)", elapsed)
 	}
 }
+
+func TestDHT_RoutingTableFilledOnConnect(t *testing.T) {
+	a, err := core.NewNode(t.TempDir() + "/a.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := core.NewNode(t.TempDir() + "/b.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Shutdown()
+	defer b.Shutdown()
+
+	da := NewDHTNode(a, "a")
+	db := NewDHTNode(b, "b")
+	da.Start()
+	db.Start()
+	defer da.Stop()
+	defer db.Stop()
+
+	if err := b.Listen("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Dial(b.Addr()); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for da.table.Size() < 1 || db.table.Size() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("routing tables not filled on connect: a=%d b=%d",
+				da.table.Size(), db.table.Size())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
