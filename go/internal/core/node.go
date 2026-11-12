@@ -40,6 +40,9 @@ type Node struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	onConnect 	[]func(common.NodeID)
+	onConnectMu sync.RWMutex
 }
 
 // NewNode creates a Node, generating and loading its identity from keyPath.
@@ -154,6 +157,11 @@ func (n *Node) serveConn(conn *Conn) {
 				conn.id = msg.From
 				n.addPeer(conn)
 				log.Printf("peer connected: %s", msg.From)
+				n.onConnectMu.RLock()
+				for _, f := range n.onConnect {
+					f(msg.From)
+				}
+				n.onConnectMu.RUnlock()
 				handshakeDone = true
 
 				if conn.id != n.ID {
@@ -373,4 +381,13 @@ func (n *Node) PeerDone(id common.NodeID) <-chan struct{} {
 		return closed
 	}
 	return conn.ctx.Done()
+}
+
+// OnPeerConnected registers a function that is called every time a peer
+// completes the handshake. Register before dialing. Callbacks must be
+// quick and must not block: they run on the connection's goroutine.
+func (n *Node) OnPeerConnected(f func(id common.NodeID)) {
+	n.onConnectMu.Lock()
+	defer n.onConnectMu.Unlock()
+	n.onConnect = append(n.onConnect, f)
 }
