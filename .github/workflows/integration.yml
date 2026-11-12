@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [main]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+  integration:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the 5 nodes
+        run: docker compose -f infra/compose/cluster-5.yml up -d --build node1 node2 node3 node4 node5
+
+      - name: Integration tests
+        run: bash scripts/integration-test.sh
+
+      - name: Node logs (on failure)
+        if: failure()
+        run: docker compose -f infra/compose/cluster-5.yml logs --no-color node1 node2 node3 node4 node5 | tail -300
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/compose/cluster-5.yml down -v
