@@ -61,6 +61,20 @@ curl -X POST --data "hello" http://localhost:9101/gossip
 make cluster-down
 ```
 
+   ## Python node
+
+   ```bash
+   cd python
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -e ".[dev]"
+   pytest
+   python -m p2plab --addr 0.0.0.0:7100 \
+     --dial localhost:7001,localhost:7002,localhost:7003,localhost:7004,localhost:7005
+   ```
+
+   It joins the Go cluster and takes part in gossip and DHT lookups. The
+   shared wire protocol is documented in [docs/protocol.md](docs/protocol.md).
+
 Grafana: http://localhost:3000 (admin / admin), folder **p2p-lab**.
 
 ## Results
