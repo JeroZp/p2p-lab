@@ -1,0 +1,23 @@
+[project]
+name = "p2plab"
+version = "0.7.0"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=42",
+    "aiohttp>=3.9",
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["p2plab*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

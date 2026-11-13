@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"encoding/json"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -100,6 +102,32 @@ func main() {
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.HandleFunc("POST /dht/{key}", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := dhtNode.Store(r.PathValue("key"), body); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /dht/{key}", func(w http.ResponseWriter, r *http.Request) {
+		values, ok := dhtNode.FindValue(r.PathValue("key"))
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		out := make([]string, len(values))
+		for i, v := range values {
+			out[i] = string(v)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
 	})
 
 	go func() {
