@@ -7,7 +7,9 @@ from aiohttp import web
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .node import Node
+from .gossip import Gossip
 
+GOSSIP = web.AppKey("gossip", Gossip)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="p2plab")
@@ -21,12 +23,23 @@ def parse_args() -> argparse.Namespace:
 async def metrics(_request: web.Request) -> web.Response:
     return web.Response(body=generate_latest(), headers={"Content-Type": CONTENT_TYPE_LATEST})
 
+async def post_gossip(request: web.Request) -> web.Response:
+    await request.app[GOSSIP].broadcast(await request.read())
+    return web.Response(status=202)
+
+
+async def print_gossip(gossip: Gossip) -> None:
+    while True:
+        data = await gossip.received.get()
+        print(f"[gossip] {data.decode(errors='replace')}", flush=True)
 
 async def main() -> None:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     node = Node(args.key)
+    gossip = Gossip(node)
+    printer = asyncio.create_task(print_gossip(gossip))
     host, port = args.addr.rsplit(":", 1)
     await node.listen(host, int(port))
     logging.info("node %s listening on %s", node.id.hex(), args.addr)
@@ -35,7 +48,9 @@ async def main() -> None:
         node.maintain([a.strip() for a in args.dial.split(",")])
 
     app = web.Application()
+    app[GOSSIP] = gossip
     app.router.add_get("/metrics", metrics)
+    app.router.add_post("/gossip", post_gossip)
     runner = web.AppRunner(app)
     await runner.setup()
     http_host, http_port = args.http.rsplit(":", 1)
