@@ -8,8 +8,10 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .node import Node
 from .gossip import Gossip
+from .dht import DHT
 
 GOSSIP = web.AppKey("gossip", Gossip)
+DHT_KEY = web.AppKey("dht", DHT)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="p2plab")
@@ -33,12 +35,24 @@ async def print_gossip(gossip: Gossip) -> None:
         data = await gossip.received.get()
         print(f"[gossip] {data.decode(errors='replace')}", flush=True)
 
+async def put_value(request: web.Request) -> web.Response:
+    await request.app[DHT_KEY].store(request.match_info["key"], await request.read())
+    return web.Response(status=204)
+
+
+async def get_value(request: web.Request) -> web.Response:
+    values = await request.app[DHT_KEY].find_value(request.match_info["key"])
+    if values is None:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response([v.decode(errors="replace") for v in values])
+
 async def main() -> None:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     node = Node(args.key)
     gossip = Gossip(node)
+    dht = DHT(node, args.addr)
     printer = asyncio.create_task(print_gossip(gossip))
     host, port = args.addr.rsplit(":", 1)
     await node.listen(host, int(port))
@@ -49,8 +63,11 @@ async def main() -> None:
 
     app = web.Application()
     app[GOSSIP] = gossip
+    app[DHT_KEY] = dht
     app.router.add_get("/metrics", metrics)
     app.router.add_post("/gossip", post_gossip)
+    app.router.add_post("/dht/{key}", put_value)
+    app.router.add_get("/dht/{key}", get_value)
     runner = web.AppRunner(app)
     await runner.setup()
     http_host, http_port = args.http.rsplit(":", 1)
